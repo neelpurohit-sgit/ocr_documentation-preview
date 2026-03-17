@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scoreboard OCR System Documentation</title>
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+          Arial, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        background-color: #f3f4f6;
+        margin: 0;
+        padding: 40px 20px;
+      }
+      .document-container {
+        max-width: 850px;
+        margin: 0 auto;
+        background-color: #ffffff;
+        padding: 60px;
+        border-radius: 8px;
+        box-shadow:
+          0 4px 6px -1px rgba(0, 0, 0, 0.1),
+          0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      }
+      .doc-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 2px solid #e5e7eb;
+        padding-bottom: 15px;
+        margin-bottom: 40px;
+        color: #6b7280;
+        font-size: 0.9em;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .doc-footer {
+        margin-top: 60px;
+        border-top: 2px solid #e5e7eb;
+        padding-top: 20px;
+        text-align: center;
+        color: #9ca3af;
+        font-size: 0.85em;
+      }
+      .author-highlight {
+        color: #1d4ed8;
+      }
+      h1 {
+        color: #111827;
+        font-size: 2.2em;
+        margin-bottom: 20px;
+        letter-spacing: -0.02em;
+      }
+      h2 {
+        color: #1d4ed8;
+        margin-top: 40px;
+        font-size: 1.4em;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 8px;
+      }
+      h3 {
+        color: #374151;
+        margin-top: 30px;
+        font-size: 1.1em;
+      }
+      p {
+        margin-bottom: 16px;
+        color: #4b5563;
+      }
+      code {
+        background-color: #f1f5f9;
+        padding: 3px 6px;
+        border-radius: 4px;
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        color: #ef4444;
+        font-size: 0.9em;
+      }
+      pre {
+        background-color: #1e293b;
+        padding: 16px;
+        border-radius: 8px;
+        overflow-x: auto;
+        margin: 20px 0;
+      }
+      pre code {
+        background-color: transparent;
+        color: #f8fafc;
+        padding: 0;
+      }
+      ul,
+      ol {
+        margin-bottom: 20px;
+        color: #4b5563;
+        padding-left: 20px;
+      }
+      li {
+        margin-bottom: 10px;
+      }
+      strong {
+        color: #111827;
+      }
+      .regex-block {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-left: 4px solid #1d4ed8;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 4px;
+      }
+      .regex-title {
+        font-weight: bold;
+        color: #1e293b;
+        margin-bottom: 5px;
+        font-size: 1.05em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="document-container">
+      <div class="doc-header">
+        <span>Technical Documentation</span>
+        <span class="author-highlight">Author: Neel Purohit</span>
+      </div>
+
+      <h1>Scoreboard OCR & Smart Capture Pipeline</h1>
+
+      <h2>1. Frame Processing & Throttling (The 150ms Gate)</h2>
+      <p>
+        <strong>Objective:</strong> Prevent CPU thermal throttling and memory
+        crashes while maintaining real-time responsiveness.
+      </p>
+
+      <p>
+        The React Native Vision Camera captures video at 30 to 60 frames per
+        second (FPS). Running Optical Character Recognition (OCR) on 60 frames
+        every second would overload the mobile device. To solve this, the
+        Worklet utilizes a timestamp-based gatekeeper:
+      </p>
+
+      <pre><code>const now = Date.now();
+if (now - lastProcessedTime.value < 150) return;
+lastProcessedTime.value = now;</code></pre>
+
+      <ul>
+        <li>
+          <strong>How it works:</strong> The camera ignores all incoming frames
+          until 150 milliseconds have passed since the last successful scan.
+        </li>
+        <li>
+          <strong>Result:</strong> The OCR engine processes approximately
+          <strong>6 to 7 frames per second</strong>. This is fast enough to
+          catch a 1-second clock tick instantly, but slow enough to keep the app
+          running smoothly in the background without draining the battery.
+        </li>
+      </ul>
+
+      <h2>2. Data Extraction via Regex (The AI Brain)</h2>
+      <p>
+        <strong>Objective:</strong> Transform a raw, unstructured array of OCR
+        text strings into validated, categorized sports data.
+      </p>
+
+      <p>
+        When the OCR scans a frame, it returns a "dumb" array of text blocks
+        (e.g., <code>["ESPN", "LAKERS", "104", "12:30", "4TH", "LIVE"]</code>).
+        The pipeline must intelligently filter out broadcast noise. We achieve
+        this by running four strict Regular Expression (Regex) filters against
+        every word, combined with spatial array validation.
+      </p>
+
+      <div class="regex-block">
+        <div class="regex-title">
+          1. The Game Clock: <code>/(\d{1,2})[:.](\d{2})/</code>
+        </div>
+        <p>
+          This is the primary anchor of the system. It specifically hunts for
+          the time format.
+        </p>
+        <ul>
+          <li>
+            <strong>How it works:</strong> Looks for 1 to 2 digits, followed by
+            a separator, followed by exactly 2 digits.
+          </li>
+          <li>
+            <strong>The LED Glitch Fix:</strong> Notice it accepts both
+            <code>:</code> and <code>.</code> as separators. Bright LED
+            scoreboards often cause the camera sensor to bleed, erasing the gap
+            in a colon. This ensures the app correctly catches
+            <code>12.30</code> as <code>12:30</code>.
+          </li>
+        </ul>
+      </div>
+
+      <div class="regex-block">
+        <div class="regex-title">
+          2. The Game Period:
+          <code>/\b(1ST|2ND|3RD|4TH|Q[1-4]|HALF|OT|FINAL|PRD|PERIOD)\b/</code>
+        </div>
+        <p>
+          Instead of pattern matching, this acts as a strict VIP guest list.
+        </p>
+        <ul>
+          <li>
+            <strong>How it works:</strong> Compares the text against an
+            explicitly defined list of accepted sports periods.
+          </li>
+          <li>
+            <strong>The Boundary Rule:</strong> The <code>\b</code> (word
+            boundary) at the start and end is critical. Without it, if the TV
+            displayed the word <code>"1STOP"</code>, the regex would blindly
+            extract <code>"1ST"</code> from inside it and corrupt our data.
+          </li>
+        </ul>
+      </div>
+
+      <div class="regex-block">
+        <div class="regex-title">3. Team Scores: <code>/^\d{1,3}$/</code></div>
+        <p>
+          Scores are standard numbers, but we must prevent grabbing random
+          broadcast statistics.
+        </p>
+        <ul>
+          <li>
+            <strong>How it works:</strong> The <code>^</code> and
+            <code>$</code> assert the start and end of the string. The text
+            <em>must</em> be a standalone number between 1 and 3 digits (e.g.,
+            <code>7</code>, <code>14</code>, <code>112</code>).
+          </li>
+          <li>
+            <strong>Conflict Resolution:</strong> Before classifying a number as
+            a score, the algorithm checks <code>&& !isClock</code> to ensure we
+            do not accidentally count the Game Clock as a team score.
+          </li>
+        </ul>
+      </div>
+
+      <div class="regex-block">
+        <div class="regex-title">
+          4. Team Names (Regex + Spatial Validation):
+          <code>/^[A-Z]{2,12}$/</code>
+        </div>
+        <p>
+          This is the most complex extraction, as a team name ("LAKERS") looks
+          mathematically identical to broadcast text ("SPORTS") to a computer.
+        </p>
+        <ul>
+          <li>
+            <strong>Step 1 (Regex):</strong> First, it verifies the word
+            consists only of uppercase letters, between 2 and 12 characters
+            long.
+          </li>
+          <li>
+            <strong>Step 2 (Spatial Validation):</strong> We apply an
+            <code>isNextToData</code> boolean. The algorithm checks the parsed
+            text array to see if the proposed team name is sitting directly next
+            to a valid Team Score.
+            <em
+              >(e.g., In <code>["LAKERS", "104"]</code>, "LAKERS" is validated
+              as a team. In <code>["ESPN", "LIVE"]</code>, "ESPN" is ignored as
+              noise).</em
+            >
+          </li>
+        </ul>
+      </div>
+
+      <h3>The "Brick Wall" Gate (Ingredient Tallying)</h3>
+      <p>
+        To definitively prove the camera is looking at a scoreboard (and not a
+        microwave clock or a spreadsheet), the pipeline tallies the matched
+        regex ingredients. To unlock the UI and trigger the capture engine, a
+        single frame must possess:
+      </p>
+      <ul>
+        <li>At least <strong>two</strong> Team Scores.</li>
+        <li>
+          Either <strong>one</strong> Game Period OR
+          <strong>one</strong> Validated Team Name.
+        </li>
+      </ul>
+      <p>
+        If this threshold is met, the system flags
+        <code>isActuallyScoreboard = true</code> and proceeds to the Proximity
+        Magnet phase.
+      </p>
+
+      <h2>3. Time & Period Separation (The Proximity Magnet)</h2>
+      <p>
+        <strong>Objective:</strong> Isolate the exact Game Clock and Period to
+        display a clean UI header (e.g., <code>1:54 | 2ND</code>), while
+        ignoring false positives like "3rd & 7".
+      </p>
+
+      <p>
+        Because football scoreboards often display the "Down and Distance"
+        (e.g., 3rd & 7) near the game clock, the OCR can be easily tricked into
+        grabbing the wrong period.
+      </p>
+
+      <p><strong>The Proximity Logic:</strong></p>
+      <ol>
+        <li>
+          <strong>Locate the Clock:</strong> The algorithm finds the exact array
+          index of the Game Clock.
+        </li>
+        <li>
+          <strong>Filter by Distance:</strong> It scans the text array for all
+          words matching the Period regex. Instead of grabbing the first one it
+          sees, it calculates the mathematical distance (array steps) between
+          the Period word and the Clock word.
+        </li>
+        <li>
+          <strong>The Magnet:</strong> It permanently locks onto the Period word
+          that is <em>closest</em> to the clock, while explicitly skipping any
+          period word that has an <code>&</code> or <code>AND</code> attached to
+          it.
+        </li>
+      </ol>
+
+      <p>
+        <em>Resulting UI Output:</em>
+        <code
+          >const headerText = periodWord ? `${clockWord} | ${periodWord}` :
+          clockWord;</code
+        >
+      </p>
+
+      <h2>4. Smart Capture Engine (Paused vs. Live Games)</h2>
+      <p>
+        <strong>Objective:</strong> Capture the sharpest possible image
+        immediately, determine the live state of the game, and dynamically
+        trigger single or burst photography.
+      </p>
+
+      <p>
+        The capture engine uses a "Pre-Fetch" architecture to ensure
+        high-quality photos before the user's hands shake.
+      </p>
+
+      <h3>Step 1: The Instant Background Capture</h3>
+      <p>
+        The exact millisecond the Worklet confirms a valid scoreboard, the React
+        UI thread fires <code>captureInitialPhoto()</code>. It silently snaps a
+        high-resolution photo, crops it to the green box coordinates, and stores
+        the URI in a background <code>useRef</code>.
+      </p>
+
+      <h3>Step 2: The 4-Second Observation Window</h3>
+      <p>
+        Simultaneously, a 4000ms (4-second) <code>setTimeout</code> begins. The
+        Worklet tracks the Game Clock for changes:
+      </p>
+      <ul>
+        <li>
+          <strong>Normalization:</strong> It converts all <code>.</code> to
+          <code>:</code> (turning <code>12.29</code> into <code>12:29</code>) so
+          OCR glitches do not trigger false ticks.
+        </li>
+        <li>
+          <strong>The Sticky Tracker:</strong> If the clock string changes at
+          all compared to the previous frame,
+          <code>isLiveGame.value</code> permanently flips to <code>true</code>.
+        </li>
+      </ul>
+
+      <h3>Step 3: Resolution & Final Capture</h3>
+      <ul>
+        <li>
+          <strong>Scenario A (Paused Game):</strong> If the 4-second timer
+          finishes and the Worklet never detected a clock change, the app
+          assumes a paused screen. It pulls the 1 background photo from the
+          <code>useRef</code>, ignores the burst sequence, and displays the
+          "Paused Game Captured" UI.
+        </li>
+        <li>
+          <strong>Scenario B (Live Game):</strong> If the Worklet detects a
+          clock change within the 4 seconds, React <em>instantly</em> cancels
+          the timer. It keeps the 1st background photo, calculates the exact
+          hardware processing delay, and snaps
+          <strong>2 more photos exactly 1.0 seconds apart</strong> to create a
+          perfect 3-photo sequential burst.
+        </li>
+      </ul>
+
+      <div class="doc-footer">
+        Document prepared & engineered by <strong>Neel Purohit</strong><br />
+      </div>
+    </div>
+  </body>
+</html>
